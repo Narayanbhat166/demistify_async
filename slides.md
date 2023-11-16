@@ -338,8 +338,7 @@ Functionality provided by the programming language.
 ---
 # The rust async ecosystem
 
-`asynchronous Rust code does not run on its own, so you must choose a runtime to execute it`
-- Tokio
+asynchronous Rust code does not run on its own, so you must choose a runtime to execute it
 
 This keeps the code executor agnostic.
 
@@ -347,6 +346,109 @@ This keeps the code executor agnostic.
 - Rust provides language support to write async code.
 - Tokio provides an executor to run async code.
 <v-click>
+
+---
+
+## The language support
+
+Futures and Tasks
+
+- A Future in Rust represents a value that may not have been computed yet.
+- Task is a future that the executor schedules for execution. These tasks are non-blocking and can yield control when not ready to proceed, allowing other tasks to run.
+( A program and a process analogy )
+
+## The runtime / executor support
+
+- IO Event loop to check for completion / readiness of IO events. Buillt on top of MIO.
+- A task scheduler.
+- A reactor, to notify tasks when IO is ready / complete.
+
+<hr>
+
+Let's go over the fundamentals.
+
+---
+
+# IO multiplexing and Non Blocking IO
+
+When a server is dealing with multiple IO, We want to be notified if one or more I/O conditions are read for read or write.
+- Input is ready to be read.
+- Descriptor is capable of taking more output.
+
+This capability is called I/O multiplexing.
+
+Phases of Input Operation.
+- Waiting for the data to be ready. This involves waiting for data to arrive on the network. When the packet arrives, it is copied into a buffer within the kernel.
+- Copying the data from the kernel to the process. This means copying the (ready) data from the kernel's buffer into our application buffer.
+
+---
+
+# Blocking IO
+
+By default all sockets are blocking.
+
+```mermaid
+sequenceDiagram
+    Application ->>+ Kernel: read()
+    Note right of Kernel: Wait for data
+    Note right of Kernel: Data ready
+    Note right of Kernel: Copy data to to user 
+    Kernel ->>- Application: Ok(data)
+```
+
+---
+
+# Non Blocking IO
+
+When an I/O operation that I request cannot be completed without putting the process to sleep, do not put the process to sleep, but return an error instead
+
+- Application has to repeatedly `poll` the file descriptor to check whether the socket is readable.
+
+---
+
+```mermaid
+sequenceDiagram
+    Application ->> Kernel: read()
+    Kernel ->> Application: Err(would_block)
+    Note right of Kernel: Data ready 
+    Application ->>+ Kernel: read()
+    Note right of Kernel: Copy data to to user
+    Kernel ->>- Application: Ok(data)
+```
+
+---
+
+# IO multiplexing
+
+Use special system calls (`select` or `poll` ) to wait for any one of the file descriptors to be ready for read / write.
+
+- Block in one of these two system calls, instead of blocking in the actual IO.
+- We block in a call to select, waiting for the datagram socket to be readable.
+- When select returns that the socket is readable, we then call recvfrom to copy the datagram into our application buffer.
+
+<br>
+<hr>
+<br>
+
+<v-clicks>
+
+- We can wait for more then one file descriptor to be ready. 
+- Requires two system calls. `select` and `read`.
+
+</v-clicks>
+
+
+---
+
+```mermaid
+sequenceDiagram
+    Application ->>+ Kernel: select()
+    Note right of Kernel: Wait for data
+    Kernel ->>- Application: Readable
+    Application ->>+ Kernel: read()
+    Note right of Kernel: Copy data to to user
+    Kernel ->>- Application: Ok(data)
+```
 
 ---
 
