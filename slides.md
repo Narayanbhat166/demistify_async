@@ -24,9 +24,9 @@ fonts:
   mono: "Iosevka Term"
 ---
 
-# Demistify asynchronous programming
+# Asynchronous I/O
 
-<uim-rocket/> A guide to understanding asynchronous programming. <uim-rocket/>
+A deep dive into asynchronous IO with rust and MIO. 
 
 <!--
 The last comment block of each slide will be treated as slide notes. It will be visible and editable in Presenter Mode along with the slide. [Read more in the docs](https://sli.dev/guide/syntax.html#notes)
@@ -34,14 +34,15 @@ The last comment block of each slide will be treated as slide notes. It will be 
 
 ---
 
-## Takeaways
+## What to expect
 
 <hr>
 
 <v-clicks>
 
-- Gain deeper understanding of how asynchronous programming works and is used in real world to solve various problems.
-- Be a better developer. Inspire others.
+- The evolution of web server architectures.
+- Gain deeper understanding of the rust async ecosystem.
+- Have fun.
 
 </v-clicks>
 
@@ -53,240 +54,212 @@ The last comment block of each slide will be treated as slide notes. It will be 
 
 ---
 
-# Why do we need asynchronous programming?
+# Web server architectures
 
-Let's try to understand the problem.
+- Built on top of TCP (also UDP).
+- Communication through network sockets ( IP + PORT).
+- Server listens on a socket. ( exposes a port on an IP address ).
+- Client connects to a socket. ( connects to a port on an IP address ).
+- A stream is a duplex communication channel established between a client and server.
+
+---
+
+## A simple architecture
+
+```mermaid
+graph LR;
+    Client1 --> Server;
+    Client2 --> Server;
+    Client3 --> Server;
+    Client4 --> Server;
+```
 
 <hr>
 
-## Problem statement
+---
 
-Get data from the website https://jsonplaceholder.typicode.com.
+```mermaid
+sequenceDiagram
+    Client --> Server: Establish a tcp connection
+    Client ->> Server: Http Request.
+    Note left of Client: Write to stream.
+    Note right of Server: Read from stream.
+    Server ->> Client: Http Response.
+    Note right of Server: Write to stream.
+    Note left of Client: Read from stream.
+```
 
-- All the posts.
-- Comments associated with each post.
+---
 
-<hr>
-<br>
+# The evolution
+
+The current state of web is a result of decades of learnings.
 
 <v-clicks>
 
-1. ### Checkpoint - _Starters_
-
-Get the posts made by the all the users. Use the api endpoint https://jsonplaceholder.typicode.com/posts to get the details of posts
-
-2. ### Checkpoint - _Completeness_
-
-<!-- - For each post, get the comments. You can look at the api reference here https://jsonplaceholder.typicode.com -->
-
-3. ### Checkpoint - _Performance_
-
-<!-- - It takes a lot of time to get the data, optimize it. -->
-
-4. ### Checkpoint - _Efficiency_
+- Single threaded.
+- Multi threaded.
+- Asynchronous. 
 
 </v-clicks>
-<!-- - The resources are limited, make efficient use of it. -->
+
+Let's look at each of them. 
+
+The web server should be capable of sleeping ( to simulate IO ).
+The sleep time will be specified in the request.
+
+```txt
+GET /1000
+```
+
+Sleep for `1000` ms
 
 ---
 
-## Making a single request
+# Single Thread
 
-To get started, let's get all the posts.
+```rust {1|5-6|8|9-10} {maxHeight:'200px'}
+use std::net::TcpListener;
 
-Python
+/// This server is run on a single thread, does blocking IO
+fn main() {
+    let address = "127.0.0.1:6969";
+    let listener = TcpListener::bind(address).unwrap();
 
-```py {1|2|4-5|7}
-import requests
-from pprint import pprint
-
-def make_request(url):
-  return requests.get(url).json()
-
-pprint(make_request("https://jsonplaceholder.typicode.com/posts"))
+    for stream in listener.incoming() {
+        let stream = stream.unwrap();
+        server::handle_connection(stream);
+    }
+}
 ```
-
-Output
 <v-click>
 
-```json
-[{'body': 'quia et suscipit\n'
-          'suscipit recusandae consequuntur expedita et cum\n'
-          'reprehenderit molestiae ut ut quas totam\n'
-          'nostrum rerum est autem sunt rem eveniet architecto',
-  'id': 1,
-  'title': 'sunt aut facere repellat provident occaecati excepturi optio '
-           'reprehenderit',
-  'userId': 1}
-]
+```rust {1|2|4|6-9|11} {maxHeight:'230px'}
+pub fn handle_connection(mut stream: net::TcpStream) {
+  let sleep_time = parse_request(stream);
+
+  std::thread::sleep(Duration::from_millis(sleep_time.into()));
+
+  let status_line = "HTTP/1.1 200 OK";
+  let contents = fs::read_to_string("static/index.html").unwrap();
+  let length = contents.len();
+  let response = format!("{status_line}\r\nContent-Length: {length}\r\n\r\n{contents}");
+
+  stream.write_all(response.as_bytes()).unwrap();
+}
 ```
 
 </v-click>
 
 ---
 
-## Let's complete the solution
+# Benchmark
 
-Get the comments associated with every post. Use the endpoint https://jsonplaceholder.typicode.com/posts/{post_id}/comments.
+Drill is a HTTP load testing application written in Rust. https://github.com/fcsonline/drill.
 
-Steps
+The configuration file.
+```yaml {2|3|1|5-8}
+concurrency: 150
+base: "http://localhost:6969"
+iterations: 150
 
-- Get all the posts
-- Get the comments associated with each post.
-
----
-
-## Completeness
-
-<br>
-
-```py {4-7|6|10|12|13|14|15}
-import requests
-
-
-def make_request(url):
-    response = requests.get(url)
-    print(url, response)
-    return response.json()
-
-
-posts = make_request("https://jsonplaceholder.typicode.com/posts")
-
-for post in posts[:10]:
-    post_id = post.get('id')
-    comments_url = f"https://jsonplaceholder.typicode.com/posts/{post_id}/comments"
-    make_request(comments_url)
+plan:
+  - name: Fetch base
+    request:
+      url: /1000
 ```
-
----
-
-Output
-
-```txt {1|1-2|1-3|1-4|1-5|1-6|1-7|1-8|1-9|1-10|1-11}
-https://jsonplaceholder.typicode.com/posts <Response [200]>
-https://jsonplaceholder.typicode.com/posts/1/comments <Response [200]>
-https://jsonplaceholder.typicode.com/posts/2/comments <Response [200]>
-https://jsonplaceholder.typicode.com/posts/3/comments <Response [200]>
-https://jsonplaceholder.typicode.com/posts/4/comments <Response [200]>
-https://jsonplaceholder.typicode.com/posts/5/comments <Response [200]>
-https://jsonplaceholder.typicode.com/posts/6/comments <Response [200]>
-https://jsonplaceholder.typicode.com/posts/7/comments <Response [200]>
-https://jsonplaceholder.typicode.com/posts/8/comments <Response [200]>
-https://jsonplaceholder.typicode.com/posts/9/comments <Response [200]>
-https://jsonplaceholder.typicode.com/posts/10/comments <Response [200]>
-```
-
-<v-click>
-
-We can do better.
-
-</v-click>
-
----
-
-## Let's improve our code
-
-```py {2-5}
-for post in posts[:10]:
-  post_id = post.get('id')
-  comments_url = f"https://jsonplaceholder.typicode.com/posts/{post_id}/comments"
-  make_request(comments_url)
-```
-
-<v-click>
-
-How can we optimize the code?
-
-</v-click>
-
-<br>
-
-<v-click>
-
-Introduce Parallelism
-
-</v-click>
-
----
-
-# The Fundamentals
-
-| Process                                                     | Thread                                                                   |
-| ----------------------------------------------------------- | ------------------------------------------------------------------------ |
-| An instance of a program in execution                       | Segment of a process, every process will have atleast one thread         |
-| Has a separate memory layout, isolated with other processes | Share the same heap memory as that of a process, but has separate stacks |
-| Has creating and switching overhead, slightly heavier       | Quick and easy to crete and context switch                               |
-| Difficult to communicate between processes                  | Inter thread communication is easier                                     |
-| Difficult to manage                                         | Easier to manage                                                         |
 
 <hr>
 
 <v-click>
 
-So is it threads, or processes that we need?
+Run the benchmark
+
+```bash
+drill --benchmark drill.yaml --stats
+```
 
 </v-click>
 
 ---
 
-## Checkpoint - Let's make it performant
+## Single thread - performance
 
-We can use threads to get the data in parallel since there is no dependency between the data
+Well! It is pretty bad. What are the findings.
 
-```py {3|14|20|6-9|20|21|22|24-25|27} {maxHeight:'400px'}
-import requests
-
-from threading import Thread
-
-
-def make_request(url):
-    response = requests.get(url)
-    print(url, response)
-    return response.json()
-
-
-posts = make_request("https://jsonplaceholder.typicode.com/posts")
-
-threads = []
-
-for post in posts[:10]:
-    post_id = post.get('id')
-    comments_url = f"https://jsonplaceholder.typicode.com/posts/{post_id}/comments"
-
-    thread = Thread(target=make_request, args=(comments_url,))
-    thread.start()
-    threads.append(thread)
-
-for thread in threads:
-    thread.join()
-
-print("Done")
-```
-
----
-
-## Output
-
-```txt {1|1-11|1-12|}
-https://jsonplaceholder.typicode.com/posts <Response [200]>
-https://jsonplaceholder.typicode.com/posts/9/comments <Response [200]>
-https://jsonplaceholder.typicode.com/posts/6/comments <Response [200]>
-https://jsonplaceholder.typicode.com/posts/5/comments <Response [200]>
-https://jsonplaceholder.typicode.com/posts/10/comments <Response [200]>
-https://jsonplaceholder.typicode.com/posts/2/comments <Response [200]>
-https://jsonplaceholder.typicode.com/posts/1/comments <Response [200]>
-https://jsonplaceholder.typicode.com/posts/4/comments <Response [200]>
-https://jsonplaceholder.typicode.com/posts/8/comments <Response [200]>
-https://jsonplaceholder.typicode.com/posts/3/comments <Response [200]>
-https://jsonplaceholder.typicode.com/posts/7/comments <Response [200]>
-Done
-```
+- A single thread is blocked on IO.
+- When a thread is blocked on IO, it cannot handle another request.
 
 <br>
 
+### A single threaded server cannot handle multiple requests at once
+
+How do we solve this? What would a *good project manager* do? A quick an easy way to make our application handle parallel requests.
+
 <v-click>
 
-It's time to make it efficient now
+_Throw money at the problem and spin off more threads_
+
+</v-click>
+
+<v-click>
+
+We can spawn off a thread for handling each request.
+
+</v-click>
+
+---
+
+## Multiple thread
+
+```rust {11}
+use std::net::TcpListener;
+
+/// This server is run each request on its own thread, does blocking IO.
+fn main() {
+    let address = "127.0.0.1:6969";
+    let listener = TcpListener::bind(address).unwrap();
+
+    for stream in listener.incoming() {
+        let new_stream = stream.unwrap();
+
+        std::thread::spawn(|| server::handle_connection(new_stream));
+    }
+}
+```
+<v-click>
+
+In case of rust, `std::thread` always creates an OS thread. Managed by the Operating system.
+
+</v-click>
+
+---
+
+## Multi thread - performance
+
+```txt
+Time taken for tests      1.0 seconds
+Total requests            150
+Successful requests       150
+Failed requests           0
+Requests per second       145.23 [#/sec]
+Median time per request   1020ms
+Average time per request  1018ms
+Sample standard deviation 3ms
+99.0'th percentile        1028ms
+99.5'th percentile        1028ms
+99.9'th percentile        1028ms
+```
+
+<v-click>
+
+Congratulations, our application is performant! It's time to make it efficient.
+
+</v-click>
+
+<v-click>
+
+Think like a software emgineer.
 
 </v-click>
 
@@ -305,7 +278,7 @@ It's time to make it efficient now
 
 <v-click>
 
-So where does our program stand?
+So where does our program or in case most of the web servers stand?
 
 </v-click>
 
@@ -345,343 +318,38 @@ A language runtime can be considered as a supervisor for handling concurrency.
 | Parallel execution         | Concurrent Execution                    |
 | **Preemptive scheduling**  | **Cooperative scheduling**              |
 
-Python uses green threads.
-
-<v-click>
-
-Threads are hard to work with
-
-</v-click>
-
 ---
 
-## Coroutines
+## Coroutines - Cooperative
 
 Coroutines are computer program components that allow execution to be suspended and resumed.
 These are special functions that can remember the state in between function calls.
 
 Functionality provided by the programming language.
 
-<v-click>
-
-This is exactly what we need
-
-</v-click>
-
----
-
-## A simple Couroutine
-
-This program simulates making an api call
-
-```py {1|12|5|6|7|13|14|15|7|8|9}
-import requests
-
-
-def fun():
-    url = "https://jsonplaceholder.typicode.com/posts"
-    print("Make a request to url")
-    res = yield url
-    print("Got result ", res)
-    yield
-
-
-g = fun()
-url = next(g)
-response = requests.get(url).json()
-g.send(response)
-```
-
-<v-click>
-
-```txt
-Make a request to url
-Got result ...
-```
-
-</v-click>
-
----
-
-# Async - let's get started
-
-async means that we don't block the thread waiting for IO to complete.
-
-<!--
-You can have `style` tag in markdown to override the style for the current page.
-Learn more: https://sli.dev/guide/syntax#embedded-styles
--->
-
 <v-clicks>
 
-- async
-- coroutine
-- promise
-- await
-- executor
-- event loop
-
-</v-clicks>
-
-<style>
-h1 {
-background-color: #2B90B6;
-background-image: linear-gradient(45deg, #4EC5D4 10%, #146b8c 20%);
-background-size: 100%;
--webkit-background-clip: text;
--moz-background-clip: text;
--webkit-text-fill-color: transparent;
--moz-text-fill-color: transparent;
-}
-</style>
-
----
-
-## A simple async function in python
-
-```python
-
-async def fun():
-    print("Hello, World!")
-
-
-fun()
-
-```
-
-<v-click>
-
-But this does not work
-
-</v-click>
-
-<v-click>
-
-```txt
-RuntimeWarning: coroutine 'fun' was never awaited
-```
-
-</v-click>
-
----
-
-# Let's await
-
-```py
-async def fun():
-    print("Hello, World!")
-
-await fun()
-```
-
-<v-click>
-
-Again, does not work
-
-</v-click>
-
-<v-click>
-
-```txt
-SyntaxError: 'await' outside function
-```
-
-</v-click>
-
-<br>
-
-<v-clicks>
-
-- So python does not know how to run async functions.
-- Let's get someone who knows
+- This is exactly what we need. 
+- But rust does not allow creation of coroutines / generators at user level.
+- async functions are essentially generators, which suspend execution between `await` calls.
 
 </v-clicks>
 
 ---
+# The rust async ecosystem
 
-## asyncio to the rescue
+`asynchronous Rust code does not run on its own, so you must choose a runtime to execute it`
+- Tokio
 
-```py
-import asyncio
-
-
-async def fun():
-    print("Hello, World!")
-
-asyncio.run(fun())
-```
-
-<v-click>
-
-```txt
-Hello, World!
-```
-
-</v-click>
-
----
-
-## The event loop
-
-The event loop is the core of every asyncio application. Event loops run asynchronous tasks and callbacks, perform network IO operations.
-
-It is a loop that will make IO operations on behalf of you.
-
----
-
-## Efficiency
-
-```py {1|2|5|6|7|12|13|15|17|19-24|26|28} {maxHeight:'400px'}
-import aiohttp
-import asyncio
-
-
-async def make_request(url, session):
-    response = await session.get(url)
-    data = await response.json()
-    print(url, "Done")
-    return data
-
-
-async def main():
-    async with aiohttp.ClientSession() as session:
-
-        posts = await make_request("https://jsonplaceholder.typicode.com/posts", session)
-
-        tasks = []
-
-        for post in posts[:10]:
-            post_id = post.get('id')
-            comments_url = f"https://jsonplaceholder.typicode.com/posts/{post_id}/comments"
-
-            task = make_request(comments_url, session)
-            tasks.append(task)
-
-        await asyncio.gather(*tasks)
-
-asyncio.run(main())
-```
-
----
-
-Output
-
-```txt {1|1-11}
-https://jsonplaceholder.typicode.com/posts Done
-https://jsonplaceholder.typicode.com/posts/1/comments Done
-https://jsonplaceholder.typicode.com/posts/2/comments Done
-https://jsonplaceholder.typicode.com/posts/5/comments Done
-https://jsonplaceholder.typicode.com/posts/9/comments Done
-https://jsonplaceholder.typicode.com/posts/4/comments Done
-https://jsonplaceholder.typicode.com/posts/8/comments Done
-https://jsonplaceholder.typicode.com/posts/7/comments Done
-https://jsonplaceholder.typicode.com/posts/3/comments Done
-https://jsonplaceholder.typicode.com/posts/10/comments Done
-https://jsonplaceholder.typicode.com/posts/6/comments Done
-
-```
-
-All the requests are run on a single thread, this can be checked by a very smart way
-
----
-
-# Other programming languages
-
-Javascript
-
-```js
-fetch("https://jsonplaceholder.typicode.com/posts")
-  .then((res) => res.json())
-  .then((res) => console.log(res));
-```
-
-Output
-<v-click>
-
-```json
-[{'body': 'quia et suscipit\n'
-          'suscipit recusandae consequuntur expedita et cum\n'
-          'reprehenderit molestiae ut ut quas totam\n'
-          'nostrum rerum est autem sunt rem eveniet architecto',
-  'id': 1,
-  'title': 'sunt aut facere repellat provident occaecati excepturi optio '
-           'reprehenderit',
-  'userId': 1}
-]
-```
-
-</v-click>
-
----
-
-The smart way
-
-```js {2|4|5|8|9|11-15|17|20}
-async function make_request(url) {
-  let response = await fetch(url).then((res) => res.json());
-
-  console.log(url, "Done");
-  return response;
-}
-
-async function get_data() {
-  let posts = await make_request("https://jsonplaceholder.typicode.com/posts");
-
-  let all_futures = posts.slice(0, 10).map(async (post) => {
-    let post_id = post.id;
-    let comments_url = `https://jsonplaceholder.typicode.com/posts/${post_id}/comments`;
-    return make_request(comments_url);
-  });
-
-  await Promise.all(all_futures);
-}
-
-get_data().then(() => console.log("Main Done"));
-```
-
----
-
-Output
-
-```txt {1|1-11|1-12}
-https://jsonplaceholder.typicode.com/posts Done
-https://jsonplaceholder.typicode.com/posts/1/comments Done
-https://jsonplaceholder.typicode.com/posts/3/comments Done
-https://jsonplaceholder.typicode.com/posts/4/comments Done
-https://jsonplaceholder.typicode.com/posts/5/comments Done
-https://jsonplaceholder.typicode.com/posts/8/comments Done
-https://jsonplaceholder.typicode.com/posts/7/comments Done
-https://jsonplaceholder.typicode.com/posts/10/comments Done
-https://jsonplaceholder.typicode.com/posts/9/comments Done
-https://jsonplaceholder.typicode.com/posts/2/comments Done
-https://jsonplaceholder.typicode.com/posts/6/comments Done
-Main Done
-```
-
----
-
-# Use cases
+This keeps the code executor agnostic.
 
 <v-clicks>
-
-- Build efficient and scalable web servers.
-- Make multiple api calls to endpoints efficiently.
-- Make concurrent db calls.
-
-</v-clicks>
-
+- Rust provides language support to write async code.
+- Tokio provides an executor to run async code.
 <v-click>
-
-All of these are being done in hyperswitch to make it a very performant, efficient and highly scalable product.
-
-</v-click>
 
 ---
 
-# Bonus content
-
-- https://hyperswitch.io/
-- https://hyperswitch.io/hacktoberfest
 
 # Connect with me
 
