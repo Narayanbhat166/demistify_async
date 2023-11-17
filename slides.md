@@ -17,16 +17,16 @@ preload: false
 
 fonts:
   # basically the text
-  sans: "Robot"
+  sans: "Iosevka"
   # use with `font-serif` css class from windicss
-  serif: "Robot Slab"
+  serif: "Iosevka"
   # for code blocks, inline code, etc.
   mono: "Iosevka Term"
 ---
 
 # Asynchronous I/O
 
-A deep dive into asynchronous IO with rust and MIO. 
+A deep dive into asynchronous IO with rust and MIO.
 
 <!--
 The last comment block of each slide will be treated as slide notes. It will be visible and editable in Presenter Mode along with the slide. [Read more in the docs](https://sli.dev/guide/syntax.html#notes)
@@ -36,27 +36,25 @@ The last comment block of each slide will be treated as slide notes. It will be 
 
 ## What to expect
 
+<br>
 <hr>
+<br>
 
 <v-clicks>
 
 - The evolution of web server architectures.
+
 - Gain deeper understanding of the rust async ecosystem.
+
 - Have fun.
 
 </v-clicks>
 
 ---
 
-# Table of contents
-
-<Toc maxDepth="1"></Toc>
-
----
-
 # Web server architectures
 
-- Built on top of TCP (also UDP).
+- Built on top of TCP ( also UDP ).
 - Communication through network sockets ( IP + PORT).
 - Server listens on a socket. ( exposes a port on an IP address ).
 - Client connects to a socket. ( connects to a port on an IP address ).
@@ -99,11 +97,11 @@ The current state of web is a result of decades of learnings.
 
 - Single threaded.
 - Multi threaded.
-- Asynchronous. 
+- Asynchronous.
 
 </v-clicks>
 
-Let's look at each of them. 
+Let's look at each of them.
 
 The web server should be capable of sleeping ( to simulate IO ).
 The sleep time will be specified in the request.
@@ -132,6 +130,7 @@ fn main() {
     }
 }
 ```
+
 <v-click>
 
 ```rust {1|2|4|6-9|11} {maxHeight:'230px'}
@@ -153,11 +152,12 @@ pub fn handle_connection(mut stream: net::TcpStream) {
 
 ---
 
-# Benchmark
+## Benchmark
 
-Drill is a HTTP load testing application written in Rust. https://github.com/fcsonline/drill.
+Drill is an HTTP load testing application written in Rust. https://github.com/fcsonline/drill.
 
 The configuration file.
+
 ```yaml {2|3|1|5-8}
 concurrency: 150
 base: "http://localhost:6969"
@@ -194,7 +194,7 @@ Well! It is pretty bad. What are the findings.
 
 ### A single threaded server cannot handle multiple requests at once
 
-How do we solve this? What would a *good project manager* do? A quick an easy way to make our application handle parallel requests.
+How do we solve this? What would a _good project manager_ do? A quick an easy way to make our application handle parallel requests.
 
 <v-click>
 
@@ -210,7 +210,7 @@ We can spawn off a thread for handling each request.
 
 ---
 
-## Multiple thread
+# Multi thread
 
 ```rust {11}
 use std::net::TcpListener;
@@ -227,6 +227,7 @@ fn main() {
     }
 }
 ```
+
 <v-click>
 
 In case of rust, `std::thread` always creates an OS thread. Managed by the Operating system.
@@ -329,23 +330,24 @@ Functionality provided by the programming language.
 
 <v-clicks>
 
-- This is exactly what we need. 
+- This is exactly what we need.
 - But rust does not allow creation of coroutines / generators at user level.
 - async functions are essentially generators, which suspend execution between `await` calls.
 
 </v-clicks>
 
 ---
+
 # The rust async ecosystem
 
-asynchronous Rust code does not run on its own, so you must choose a runtime to execute it
+ > Asynchronous Rust code does not run on its own, so you must choose a runtime to execute it
 
 This keeps the code executor agnostic.
 
 <v-clicks>
 - Rust provides language support to write async code.
 - Tokio provides an executor to run async code.
-<v-click>
+</v-clicks>
 
 ---
 
@@ -355,15 +357,105 @@ Futures and Tasks
 
 - A Future in Rust represents a value that may not have been computed yet.
 - Task is a future that the executor schedules for execution. These tasks are non-blocking and can yield control when not ready to proceed, allowing other tasks to run.
-( A program and a process analogy )
+  ( A program and a process analogy )
 
-## The runtime / executor support
+---
 
-- IO Event loop to check for completion / readiness of IO events. Buillt on top of MIO.
-- A task scheduler.
-- A reactor, to notify tasks when IO is ready / complete.
+# Futures
 
-<hr>
+> In essence, a future represents a value that might not be ready yet. Usually, the future becomes complete (the value is ready) due to an event happening somewhere else
+
+`An event happening somewhere else`. 
+
+The future trait 
+
+```rust
+pub trait Future {
+    type Output;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output>;
+}
+```
+
+The Context object is used to wake up the future when it becomes ready to continue execution
+
+```rust
+pub enum Poll<T> {
+    Ready(T),
+    Pending,
+}
+```
+
+---
+
+# What to do with Futures?
+`await` and `spawn`
+
+<v-clicks>
+
+- `await` -> runs the future as a task pinned to the current thread, blocking that thread until a result is produced and returned. ( immediately polled )
+- `spawn` -> runs the future on a thread pool, which launches a future as an independent task on the pool. ( polled when scheduled )
+
+</v-clicks>
+
+<v-clicks>
+
+- Once the future is scheduled to be executed, it calls the poll method to make progress on the future.
+- If poll returns `Ready`, return the Result.
+- If poll returns `NotReady`, 
+  - Register to be notified when some event occurs
+  - Return the handle to executor so that executor can run some other task on current thread.
+
+</v-clicks>
+---
+
+# Futures as a state machine
+
+A `Future` is almost always made up of a chain of other futures.
+
+At any given time in the lifecycle of a future, it can be in one of the many possible states. every time the task wakes up to continue polling, it continues execution from the current state
+
+```rust {1-5|7-12|8|2|9|2|3|10|3|4|11}
+async fn get_data(db: &dyn Database) -> Result<Posts>{
+  let user = db.find_user(user_id).await;
+  let posts = db.find_posts(user_id).await;
+  Ok(posts)
+}
+
+enum GetDataFuture {
+  Start,
+  FindUser(user_id),
+  FindPosts(user_id),
+  Done
+}
+```
+
+The poll method here will attempt to make progress through the state machine by polling the underlying futures as appropriate.
+
+
+---
+
+# The runtime / executor 
+
+- IO Event loop ( reactor ) to check for completion / readiness of IO events. Built on top of MIO.
+- A task scheduler and executor.
+
+<v-clicks>
+
+- Executor -> Run the future and make progress.
+- Reactor -> Pool for IO events and wake futures that can make progress. 
+
+</v-clicks>
+
+<v-click>
+
+There are variety of Executors to choose from.
+
+- async-std
+- smol
+
+</v-click>
+
 
 Let's go over the fundamentals.
 
@@ -372,12 +464,14 @@ Let's go over the fundamentals.
 # IO multiplexing and Non Blocking IO
 
 When a server is dealing with multiple IO, We want to be notified if one or more I/O conditions are read for read or write.
+
 - Input is ready to be read.
 - Descriptor is capable of taking more output.
 
 This capability is called I/O multiplexing.
 
 Phases of Input Operation.
+
 - Waiting for the data to be ready. This involves waiting for data to arrive on the network. When the packet arrives, it is copied into a buffer within the kernel.
 - Copying the data from the kernel to the process. This means copying the (ready) data from the kernel's buffer into our application buffer.
 
@@ -392,7 +486,7 @@ sequenceDiagram
     Application ->>+ Kernel: read()
     Note right of Kernel: Wait for data
     Note right of Kernel: Data ready
-    Note right of Kernel: Copy data to to user 
+    Note right of Kernel: Copy data to to user
     Kernel ->>- Application: Ok(data)
 ```
 
@@ -404,13 +498,14 @@ When an I/O operation that I request cannot be completed without putting the pro
 
 - Application has to repeatedly `poll` the file descriptor to check whether the socket is readable.
 
+
 ---
 
 ```mermaid
 sequenceDiagram
     Application ->> Kernel: read()
     Kernel ->> Application: Err(would_block)
-    Note right of Kernel: Data ready 
+    Note right of Kernel: Data ready
     Application ->>+ Kernel: read()
     Note right of Kernel: Copy data to to user
     Kernel ->>- Application: Ok(data)
@@ -419,6 +514,8 @@ sequenceDiagram
 ---
 
 # IO multiplexing
+
+An essential observation is that it is extremely inefficient to individually poll the OS for each IO in progress. Instead, the user should poll the OS about all or many IOs in progress and find out which are ready/complete.
 
 Use special system calls (`select` or `poll` ) to wait for any one of the file descriptors to be ready for read / write.
 
@@ -432,11 +529,10 @@ Use special system calls (`select` or `poll` ) to wait for any one of the file d
 
 <v-clicks>
 
-- We can wait for more then one file descriptor to be ready. 
+- We can wait for more then one file descriptor to be ready.
 - Requires two system calls. `select` and `read`.
 
 </v-clicks>
-
 
 ---
 
@@ -451,6 +547,63 @@ sequenceDiagram
 ```
 
 ---
+layout: two-cols
+---
+# Readiness
+<br>
+
+Operating System notifies the user when the resource is ready to read or write.
+
+<br>
+
+```c {1|2|3|4|5|6|}
+// Readiness
+start_some_io();
+when io_is_ready {
+    let mut buf = ...;
+    read(&mut buf);
+    // Do something with the data we read into buf.
+}
+```
+- Simple and easy to use, No eager allocation of memory is required. Reduces memory usage.
+- permits multiple IOs on the same thread to share a buffer
+- Epoll and kqueue
+
+
+
+::right::
+
+# Completion
+
+<br>
+
+Operating System notifies the user when reading or writing from the IO resource is complete.
+
+<br>
+
+```c {1|2|3|4|5|}
+// Completion
+let mut buf = ...;
+start_some_io(&mut buf);
+when io_is_complete {
+    // Do something with the data we read into buf.
+
+}
+
+- Requires eager allocation of buffers.
+- Permits a zero-copy approach where data can be written directly to/from user memory without being copied by the OS.
+- IOCP and io_uring
+
+```
+---
+
+# Practical example
+Metal IO - Mio is a fast, low-level I/O library for Rust focusing on non-blocking APIs and event notification for building high performance I/O apps with as little overhead as possible over the OS abstractions.
+
+Tokio Reactor / Event loop is built on top of Metal IO.
+
+---
+
 
 
 # Connect with me
