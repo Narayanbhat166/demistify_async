@@ -291,12 +291,6 @@ IO Bound
 
 ---
 
-# Concurrency
-
-A deeper understanding.
-
----
-
 ## Green threads
 
 - In computer programming, a green thread (virtual thread) is a thread that is scheduled by a runtime library or virtual machine (VM) instead of natively by the underlying operating system (OS).
@@ -304,7 +298,7 @@ A deeper understanding.
 
 The basic concept is, in IO bound processes since there is no much computation that is required, We need not create OS threads all the time.
 
-A language runtime can be considered as a supervisor for handling concurrency.
+A language runtime can be considered as a supervisor for handling concurrent code.
 
 ---
 
@@ -550,7 +544,6 @@ sequenceDiagram
 layout: two-cols
 ---
 # Readiness
-<br>
 
 Operating System notifies the user when the resource is ready to read or write.
 
@@ -565,6 +558,7 @@ when io_is_ready {
     // Do something with the data we read into buf.
 }
 ```
+
 - Simple and easy to use, No eager allocation of memory is required. Reduces memory usage.
 - permits multiple IOs on the same thread to share a buffer
 - Epoll and kqueue
@@ -575,7 +569,6 @@ when io_is_ready {
 
 # Completion
 
-<br>
 
 Operating System notifies the user when reading or writing from the IO resource is complete.
 
@@ -589,22 +582,120 @@ when io_is_complete {
     // Do something with the data we read into buf.
 
 }
+```
 
 - Requires eager allocation of buffers.
 - Permits a zero-copy approach where data can be written directly to/from user memory without being copied by the OS.
 - IOCP and io_uring
 
-```
 ---
 
 # Practical example
+
 Metal IO - Mio is a fast, low-level I/O library for Rust focusing on non-blocking APIs and event notification for building high performance I/O apps with as little overhead as possible over the OS abstractions.
 
 Tokio Reactor / Event loop is built on top of Metal IO.
 
 ---
 
+## Steps to be followed
+<br>
 
+- Register the interests
+- React to events.
+
+<br>
+
+<v-clicks>
+
+- Register `READ` interest to read from the socket.
+- React to `READ` event on the socket.
+  - Get the stream.
+  - Register `READ` interest to read from the stream.
+- React to `READ` event on the stream.
+  - Read the request.
+  - Register `WRITE` interest to write to the stream.
+- React to `WRITE` interest on the stream.
+  - Write to the stream.
+
+</v-clicks>
+
+---
+
+# Show me code
+
+```rust {1|3-4|6|8-10|12|13|15|16|17|18|19|20-27|29-31|33|34|37|38-40|42-44|46|47|48-50|52-61} {maxHeight:'500px'}
+use mio::net::TcpListener;
+
+let address = "127.0.0.1:6969";
+let mut listener = TcpListener::bind(address.parse().unwrap()).unwrap();
+
+let mut poll = Poll::new().unwrap();
+
+poll.registry()
+  .register(&mut listener, Token(0), Interest::READABLE)
+  .unwrap();
+
+let mut events = Events::with_capacity(1024);
+let mut counter = 1;
+
+loop {
+  poll.poll(&mut events, None).unwrap();
+  for event in &events {
+      match event.token() {
+          Token(0) => loop {
+              let mut stream = match listener.accept() {
+                  Ok((stream, _)) => {
+                      stream
+                  }
+                  Err(err) => {
+                      break;
+                  }
+              };
+
+              stream
+                  .register(poll.registry(), Token(counter), Interest::READABLE)
+                  .unwrap();
+
+              sockets_hm.insert(counter, stream);
+              counter += 1;
+          },
+          _ => {
+              if event.is_readable() {
+                  let token = event.token().0;
+                  let mut stream = sockets_hm.get_mut(&token).unwrap();
+                  let (response, _) = handle_mio_connection(&mut stream);
+
+                  stream
+                      .reregister(poll.registry(), Token(token), Interest::WRITABLE)
+                      .unwrap();
+
+                  responses.insert(token, response);
+              } else if event.is_writable() {
+                  let token = event.token().0;
+                  let stream = sockets_hm.get_mut(&token).unwrap();
+                  let response = responses.get(&token).unwrap();
+
+                  if !event.is_write_closed() {
+                      stream
+                          .write_all(response.as_bytes())
+                          .expect("Could not write to stream");
+
+                      stream.flush().unwrap();
+
+                      poll.registry().deregister(stream).unwrap();
+                      sockets_hm.remove(&token);
+                      responses.remove(&token);
+                  }
+              }
+          }
+      }
+  }
+}
+```
+
+
+---
 
 # Connect with me
 
