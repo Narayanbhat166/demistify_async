@@ -101,6 +101,8 @@ The current state of web is a result of decades of learnings.
 
 </v-clicks>
 
+<v-click>
+
 Let's look at each of them.
 
 The web server should be capable of sleeping ( to simulate IO ).
@@ -111,6 +113,8 @@ GET /1000
 ```
 
 Sleep for `1000` ms
+
+</v-click>
 
 ---
 
@@ -194,7 +198,7 @@ Well! It is pretty bad. What are the findings.
 
 ### A single threaded server cannot handle multiple requests at once
 
-How do we solve this? What would a _good project manager_ do? A quick an easy way to make our application handle parallel requests.
+How do we solve this? A quick an easy way to make our application handle parallel requests.
 
 <v-click>
 
@@ -296,9 +300,11 @@ IO Bound
 - In computer programming, a green thread (virtual thread) is a thread that is scheduled by a runtime library or virtual machine (VM) instead of natively by the underlying operating system (OS).
 - Green threads emulate multithreaded environments without relying on any native OS abilities
 
-The basic concept is, in IO bound processes since there is no much computation that is required, We need not create OS threads all the time.
+The basic concept is, in IO bound processes since there is not much computation that is required, We need not create OS threads all the time.
 
 A language runtime can be considered as a supervisor for handling concurrent code.
+
+The language runtime can intelligently context switch between various green threads to make progress.
 
 ---
 
@@ -306,7 +312,7 @@ A language runtime can be considered as a supervisor for handling concurrent cod
 
 | OS threads                 | User threads / Green threads            |
 | -------------------------- | --------------------------------------- |
-| Created at the OS level    | Create at user / languate runtime level |
+| Created at the OS level    | Created at user / languate runtime level |
 | Requires a system call     | Does not require a system call          |
 | Is run on a dedicated core | Are run on the same thread              |
 | Comparatively heavier      | Lighther to create and context switch   |
@@ -432,7 +438,7 @@ The poll method here will attempt to make progress through the state machine by 
 # The runtime / executor 
 
 - IO Event loop ( reactor ) to check for completion / readiness of IO events. Built on top of MIO.
-- A task scheduler and executor.
+- A task scheduler and executor drives the futures to completion.
 
 <v-clicks>
 
@@ -450,8 +456,11 @@ There are variety of Executors to choose from.
 
 </v-click>
 
+<v-click>
 
 Let's go over the fundamentals.
+
+</v-click>
 
 ---
 
@@ -459,8 +468,8 @@ Let's go over the fundamentals.
 
 When a server is dealing with multiple IO, We want to be notified if one or more I/O conditions are read for read or write.
 
-- Input is ready to be read.
-- Descriptor is capable of taking more output.
+- Input is ready to be read from the File Descriptor.
+- File Descriptor is capable of taking more output.
 
 This capability is called I/O multiplexing.
 
@@ -515,7 +524,7 @@ Use special system calls (`select` or `poll` ) to wait for any one of the file d
 
 - Block in one of these two system calls, instead of blocking in the actual IO.
 - We block in a call to select, waiting for the datagram socket to be readable.
-- When select returns that the socket is readable, we then call recvfrom to copy the datagram into our application buffer.
+- When select returns that the socket is readable, we then call read() to copy the datagram into our application buffer.
 
 <br>
 <hr>
@@ -560,7 +569,7 @@ when io_is_ready {
 ```
 
 - Simple and easy to use, No eager allocation of memory is required. Reduces memory usage.
-- permits multiple IOs on the same thread to share a buffer
+- Permits multiple IOs on the same thread to share a buffer
 - Epoll and kqueue
 
 
@@ -694,6 +703,36 @@ loop {
 }
 ```
 
+---
+
+# How it all fits in 
+
+> At this time the main intended use case of generators is an implementation primitive for async/await syntax, but generators will likely be extended to ergonomic implementations of iterators and other primitives in the future
+
+```rust {1-3|5-8|10|11|12|13|14|15|17|18|19|} {maxHeight:'500px'}
+async fn db_call(pool) {
+  db.execute_query("SELECT * FROM users", pool).await;
+}
+
+enum FindFuture {
+  RegisterInterest(pool, query),
+  ReactToEvent(pool, query),
+}
+
+fn poll(self: &mut Self, context: Ctx) {
+  match self {
+    RegisterInterest(pool, query) =>  { 
+      context.poll.register(pool, Interest::Writable);
+      self = ReactToEvent(pool, query)
+      Poll::Pending()
+    },
+    ReactToEvent(pool, query) => {
+      let res = pool.write(query);
+      Poll::Ready(res)
+    }
+  }
+}
+```
 
 ---
 
